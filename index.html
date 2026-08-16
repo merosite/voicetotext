@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Nepali Voice Typing By Lurey Kashyap</title>
+    <title>Voice Typing Engine By Lurey Kashyap</title>
     <style>
         * {
             box-sizing: border-box;
@@ -46,7 +46,7 @@
 
         textarea {
             width: 100%;
-            height: 280px;
+            height: 320px;
             padding: 15px;
             border: 1px solid #ccc;
             border-radius: 8px;
@@ -124,21 +124,21 @@
 <body>
 
 <div class="container">
-    <h2>🎙️ Nepali Voice Typing By Lurey Kashyap</h2>
+    <h2 id="uiTitle">🎙️ Voice Typing Engine By Lurey Kashyap</h2>
 
     <div class="section">
-        <textarea id="sttOutput" placeholder="माइक अन गरेर बोल्नुहोस्... iPhone, iPad वा Windows सबैमा काम गर्दछ।"></textarea>
+        <textarea id="sttOutput" placeholder="माइक अन गरेर बोल्नुहोस्..."></textarea>
         
         <div class="controls">
-            <label for="langSelect">भाषा:</label>
+            <label for="langSelect" id="uiLangLabel">भाषा:</label>
             <select id="langSelect" onchange="changeLanguage()">
-                <option value="ne-NP" selected>नेपाली (Strict Nepali)</option>
-                <option value="en-US">English (Strict English)</option>
+                <option value="ne-NP" selected>नेपाली (Nepali)</option>
+                <option value="en-US">English (English)</option>
             </select>
 
             <button id="startBtn" class="btn-mic-start" onclick="startRecognition()">🎤 माइक अन गर्नुहोस्</button>
             <button id="stopBtn" class="btn-mic-stop" onclick="stopRecognition()" disabled>🛑 माइक बन्द गर्नुहोस्</button>
-            <button class="btn-clear" onclick="clearText()">🗑️ Clear Text</button>
+            <button id="clearBtn" class="btn-clear" onclick="clearText()">🗑️ Clear Text</button>
         </div>
 
         <div class="status-box">
@@ -149,117 +149,229 @@
 </div>
 
 <script>
-    // iOS (Safari/Chrome), iPadOS र Windows सपोर्टका लागि Cross-Browser Provider
     const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
     
+    // UI Elements
+    const uiTitle = document.getElementById('uiTitle');
+    const uiLangLabel = document.getElementById('uiLangLabel');
     const sttOutput = document.getElementById('sttOutput');
     const startBtn = document.getElementById('startBtn');
     const stopBtn = document.getElementById('stopBtn');
+    const clearBtn = document.getElementById('clearBtn');
     const sttStatus = document.getElementById('sttStatus');
     const dot = document.getElementById('dot');
     const langSelect = document.getElementById('langSelect');
 
     let recognition = null;
     let isUserStopped = false; 
-    let finalTranscript = '';  
+    let committedText = ''; 
 
-    // १. भाषा अनुसार अनावश्यक/दोहोरिएका शब्दहरू हटाउने Filter Logic
-    function cleanTranscript(text, lang) {
+    // Dynamic UI Translation Dictionary
+    const translations = {
+        'ne-NP': {
+            title: "🎙️ Voice Typing Engine By Lurey Kashyap",
+            placeholder: "माइक अन गरेर बोल्नुहोस्...",
+            langLabel: "भाषा:",
+            startBtn: "🎤 माइक अन गर्नुहोस्",
+            stopBtn: "🛑 माइक बन्द गर्नुहोस्",
+            clearBtn: "🗑️ Clear Text",
+            statusInactive: "माइक निष्क्रिय छ।",
+            statusListening: "सुन्दैछ... कृपया बोल्नुहोस्।",
+            statusPermissionErr: "त्रुटि: माइक्रोनको अनुमति (Microphone Permission) दिनुहोस्।",
+            statusUnsupported: "तपाईँको ब्राउजरमा Voice Typing सपोर्ट छैन।"
+        },
+        'en-US': {
+            title: "🎙️ Voice Typing Engine By Lurey Kashyap",
+            placeholder: "Turn on the mic and speak...",
+            langLabel: "Language:",
+            startBtn: "🎤 Turn On Mic",
+            stopBtn: "🛑 Turn Off Mic",
+            clearBtn: "🗑️ Clear Text",
+            statusInactive: "Microphone is inactive.",
+            statusListening: "Listening... Please speak.",
+            statusPermissionErr: "Error: Please allow microphone permission.",
+            statusUnsupported: "Voice Typing is not supported in your browser."
+        }
+    };
+
+    // १ देखि १०० सम्मका अङ्क र शुद्ध नेपाली शब्द म्यापिङ
+    const numToWordMap = {
+        '०':'शून्य', '१':'एक', '२':'दुई', '३':'तीन', '४':'चार', '५':'पाँच', '६':'छ', '७':'सात', '८':'आठ', '९':'नौ',
+        '१०':'दस', '११':'एघार', '१२':'बाह्र', '१३':'तेह्र', '१४':'चौध', '१५':'पन्ध्र', '१६':'सोह्र', '१७':'सत्र', '१८':'अठार', '१९':'उन्नाइस',
+        '२०':'बीस', '२१':'एक्याइस', '२२':'बाइस', '२३':'तेइस', '२४':'चौबीस', '२५':'पच्चीस', '२६':'छब्बीस', '२७':'सत्ताइस', '२८':'अत्ठाइस', '२९':'उन्तीस',
+        '३०':'तीस', '३१':'एकतीस', '३२':'बत्तीस', '३३':'तेत्तीस', '३४':'चौँतीस', '३५':'पैँतीस', '३६':'छत्तीस', '३७':'सैँतीस', '३८':'अधँतीस', '३९':'उन्चालिस',
+        '४०':'चालिस', '४१':'एकचालिस', '४२':'बयालिस', '४३':'त्रिचालिस', '४४':'चौवालिस', '४५':'पैँतालीस', '४६':'छयालिस', '४७':'सत्चालिस', '४८':'अठचालिस', '४९':'उन्चास',
+        '५०':'पचास', '५१':'एकान्न', '५२':'बाउन्न', '५३':'त्रिपन्न', '५४':'चौवन', '५५':'पचपन्न', '५६':'छप्पन्न', '५७':'सन्ताउन्न', '५८':'अन्ठाउन्न', '५९':'उन्सार',
+        '६०':'साठी', '६१':'एकसट्ठी', '६२':'बायसट्ठी', '६३':'त्रिलीसट्ठी', '६४':'चौँसट्ठी', '६५':'पैँसट्ठी', '६६':'छ्यासट्ठी', '६७':'सड्सट्ठी', '६८':'अड्सट्ठी', '६९':'उनान्सी',
+        '७०':'सत्तरी', '७१':'एकहत्तर', '७२':'बहत्तर', '७३':'त्रिहत्तर', '७४':'चौहत्तर', '७५':'पचहत्तर', '७६':'छ्याहत्तर', '७७':'सतहत्तर', '७८':'अठहत्तर', '७९':'उनासी',
+        '८०':'असी', '८१':'एकासी', '८२':'बयासी', '८३':'त्रियासी', '८४':'चौरासी', '८५':'पचासी', '८६':'छयासी', '८७':'सत्तासी', '८८':'अठासी', '८९':'उनान्नब्बे',
+        '९०':'नब्बे', '९१':'एकान्नब्बे', '९२':'बयानब्बे', '९३':'त्रियान्नब्बे', '९४':'चौरान्नब्बे', '९५':'पञ्चान्नब्बे', '९६':'छयान्नब्बे', '९७':'सन्तान्नब्बे', '९८':'अन्ठान्नब्बे', '९९':'उनान्सय',
+        '१००':'सय'
+    };
+
+    const wordToNumMap = {};
+    for (let key in numToWordMap) {
+        wordToNumMap[numToWordMap[key]] = key;
+    }
+    wordToNumMap['दश'] = '१०'; wordToNumMap['दस'] = '१०';
+    wordToNumMap['दुइ'] = '२'; wordToNumMap['एघार'] = '११';
+
+    const englishDigitMap = {'0':'०', '1':'१', '2':'२', '3':'३', '4':'४', '5':'५', '6':'६', '7':'७', '8':'८', '9':'९'};
+
+    function convertEnglishDigitsToNepali(str) {
+        return str.replace(/[0-9]/g, function(w) {
+            return englishDigitMap[w] || w;
+        });
+    }
+
+    function formatEnglishText(text, isFinal) {
+        if (!text) return '';
+        text = text.replace(/[\u0900-\u097F]/g, '');
+        text = text.replace(/(^\s*|[.?!]\s+)([a-z])/g, function(match, p1, p2) {
+            return p1 + p2.toUpperCase();
+        });
+        text = text.replace(/\bi\b/g, 'I');
+        text = text.replace(/\s+([,.?!])/g, '$1');
+        text = text.replace(/\s+/g, ' ').trim();
+
+        if (isFinal && text.length > 0 && !/[.?!]$/.test(text)) {
+            text += '.';
+        }
+        return text;
+    }
+
+    function processTextByLanguage(text, lang, isFinal) {
         if (!text) return '';
 
         if (lang === 'ne-NP') {
-            // नेपाली रोज्दा: अङ्ग्रेजी वर्ण (A-Z, a-z) पूर्ण रूपमा हटाउने
             text = text.replace(/[a-zA-Z]/g, '');
-        } else if (lang === 'en-US') {
-            // English रोज्दा: नेपाली/देवनागरी वर्ण पूर्ण रूपमा हटाउने
-            text = text.replace(/[\u0900-\u097F]/g, '');
-        }
+            text = convertEnglishDigitsToNepali(text);
+            text = text.replace(/कार्यान्व्यन/g, 'कार्यान्वयन');
 
-        // अनावस्यक स्पेस हटाउने
-        text = text.replace(/\s+/g, ' ');
+            text = text.replace(/([०-९]+)\s+(दश|दस|[०-९]+)/g, function(match, num) {
+                return num;
+            });
 
-        // लगातार दोहोरिएका शब्दहरू (Duplicate Phrases) रोक्ने
-        let words = text.trim().split(' ');
-        let filteredWords = [];
-        for (let i = 0; i < words.length; i++) {
-            if (i === 0 || words[i] !== words[i - 1]) {
-                filteredWords.push(words[i]);
+            text = text.replace(/([०-९]+)/g, function(match) {
+                if (numToWordMap[match]) {
+                    return match + ' (' + numToWordMap[match] + ')';
+                }
+                return match;
+            });
+
+            for (let word in wordToNumMap) {
+                let num = wordToNumMap[word];
+                let wordInParen = numToWordMap[num] || word;
+                let regex = new RegExp('(?:^|\\s)' + word + '(?:$|\\s)', 'g');
+                text = text.replace(regex, ' ' + num + ' (' + wordInParen + ') ');
             }
+
+            text = text.replace(/\s+/g, ' ').trim();
+
+            if (isFinal && text.length > 0 && !text.endsWith('।')) {
+                text += '।';
+            }
+
+            return text;
+        } else if (lang === 'en-US') {
+            return formatEnglishText(text, isFinal);
         }
 
-        return filteredWords.join(' ');
+        return text;
+    }
+
+    function syncCommittedText() {
+        committedText = sttOutput.value.trim();
+        if (committedText.length > 0) {
+            committedText += ' ';
+        }
+    }
+
+    function updateUIInterface(lang) {
+        const t = translations[lang] || translations['ne-NP'];
+        uiTitle.textContent = t.title;
+        sttOutput.placeholder = t.placeholder;
+        uiLangLabel.textContent = t.langLabel;
+        startBtn.textContent = t.startBtn;
+        stopBtn.textContent = t.stopBtn;
+        clearBtn.textContent = t.clearBtn;
+        if (!startBtn.disabled) {
+            sttStatus.textContent = t.statusInactive;
+        }
     }
 
     function initRecognition() {
         if (!SpeechRecognition) {
-            sttStatus.textContent = "तपाईँको ब्राउजरमा Voice Typing सपोर्ट छैन। (Safari / Chrome अपडेट गर्नुहोस्)";
+            const currentLang = langSelect.value;
+            sttStatus.textContent = translations[currentLang].statusUnsupported;
             startBtn.disabled = true;
             return;
         }
 
         recognition = new SpeechRecognition();
-        
-        // iOS Safari Compatibility: iOS मा continuous=true ले कहिलेकाहीँ काम नगर्ने हुँदा Auto-Restart Engine प्रयोग गरिएको छ
         recognition.continuous = true;     
         recognition.interimResults = true; 
         recognition.lang = langSelect.value;
 
         recognition.onstart = () => {
-            sttStatus.textContent = "सुन्दैछ... कृपया बोल्नुहोस्।";
+            const currentLang = langSelect.value;
+            sttStatus.textContent = translations[currentLang].statusListening;
             dot.style.display = 'inline-block';
             startBtn.disabled = true;
             stopBtn.disabled = false;
         };
 
         recognition.onresult = (event) => {
-            let interimTranscript = '';
+            let sessionFinal = '';
+            let sessionInterim = '';
             const currentLang = langSelect.value;
 
             for (let i = event.resultIndex; i < event.results.length; ++i) {
-                let rawText = event.results[i][0].transcript;
-                let cleanedText = cleanTranscript(rawText, currentLang);
-
-                if (cleanedText) {
-                    if (event.results[i].isFinal) {
-                        let lastFinalWord = finalTranscript.trim().split(' ').pop();
-                        let firstNewWord = cleanedText.trim().split(' ')[0];
-
-                        if (lastFinalWord && lastFinalWord === firstNewWord) {
-                            cleanedText = cleanedText.trim().split(' ').slice(1).join(' ');
-                        }
-
-                        if (cleanedText) {
-                            finalTranscript += cleanedText + ' ';
-                        }
+                let isFinal = event.results[i].isFinal;
+                let cleanChunk = processTextByLanguage(event.results[i][0].transcript, currentLang, isFinal);
+                
+                if (cleanChunk) {
+                    if (isFinal) {
+                        sessionFinal += cleanChunk + ' ';
                     } else {
-                        interimTranscript += cleanedText + ' ';
+                        sessionInterim += cleanChunk + ' ';
                     }
                 }
             }
 
-            sttOutput.value = (finalTranscript + interimTranscript).replace(/\s+/g, ' ');
+            if (sessionFinal.length > 0) {
+                committedText = (committedText + sessionFinal).replace(/\s+/g, ' ');
+            }
+
+            let fullDisplay = (committedText + sessionInterim).replace(/\s+/g, ' ');
+            sttOutput.value = fullDisplay;
             sttOutput.scrollTop = sttOutput.scrollHeight;
         };
 
         recognition.onerror = (event) => {
+            const currentLang = langSelect.value;
             if (event.error === 'not-allowed') {
-                sttStatus.textContent = "त्रुटि: माइक्रोनको अनुमति (Microphone Permission) दिनुहोस्।";
+                sttStatus.textContent = translations[currentLang].statusPermissionErr;
                 isUserStopped = true;
             } else if (event.error !== 'no-speech') {
-                sttStatus.textContent = "सुन्ने क्रममा समस्या आयो (" + event.error + ")";
+                sttStatus.textContent = "Error: " + event.error;
             }
         };
 
         recognition.onend = () => {
-            // प्रयोगकर्ताले आफैँ Stop नथिचेसम्म स्वतः रेकर्डिङ चालू राखिराख्ने (iOS/Windows Auto-KeepAlive)
+            syncCommittedText();
+
             if (!isUserStopped) {
-                try {
-                    recognition.start();
-                } catch (e) {
-                    // Ignore error if already started
-                }
+                setTimeout(() => {
+                    try {
+                        recognition.start();
+                    } catch (e) {
+                        // Continuous auto restart engine
+                    }
+                }, 150);
             } else {
-                sttStatus.textContent = "माइक बन्द छ।";
+                const currentLang = langSelect.value;
+                sttStatus.textContent = translations[currentLang].statusInactive;
                 dot.style.display = 'none';
                 startBtn.disabled = false;
                 stopBtn.disabled = true;
@@ -273,18 +385,13 @@
         }
         if (!recognition) return;
         
-        finalTranscript = sttOutput.value;
-        if (finalTranscript && !finalTranscript.endsWith(' ')) {
-            finalTranscript += ' ';
-        }
-
+        syncCommittedText();
         isUserStopped = false;
         recognition.lang = langSelect.value;
 
         try {
             recognition.start();
         } catch (e) {
-            // Re-initialize if state gets locked in iOS Safari
             initRecognition();
             recognition.start();
         }
@@ -293,12 +400,17 @@
     function stopRecognition() {
         if (!recognition) return;
         isUserStopped = true;
+        syncCommittedText();
         recognition.stop();
     }
 
     function changeLanguage() {
+        const selectedLang = langSelect.value;
+        updateUIInterface(selectedLang);
+        syncCommittedText();
+
         if (recognition) {
-            recognition.lang = langSelect.value;
+            recognition.lang = selectedLang;
             if (!isUserStopped && startBtn.disabled) {
                 stopRecognition();
                 setTimeout(() => { startRecognition(); }, 400);
@@ -308,14 +420,13 @@
 
     function clearText() {
         sttOutput.value = '';
-        finalTranscript = '';
+        committedText = '';
     }
 
     sttOutput.addEventListener('input', () => {
-        finalTranscript = sttOutput.value;
+        syncCommittedText();
     });
 
-    // Initialize on load
     initRecognition();
 </script>
 
